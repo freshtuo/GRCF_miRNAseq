@@ -1,0 +1,8 @@
+channels:
+    - conda-forge
+    - bioconda
+dependencies:
+    - libnsl
+    - perl
+    - perl-bioperl
+    - mirdeep2=2.0.1.3
