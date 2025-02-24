@@ -1,0 +1,329 @@
+configfile: "config/config.yaml"
+
+def get_read1_file(wildcards):
+    return config["read1"][wildcards.sample]
+
+project=config["project"]
+
+rule all:
+    input:
+        rawqc=expand("results/{project}/raw_fastq_qc/{sample}_R1_fastqc.html", project=config["project"], sample=config["read1"]),
+        config=expand("results/{project}/create_config/config.txt", project=config["project"]),
+        #collapsed_reads=expand("results/{project}/collapse_reads/reads_collapsed.fa", project=config["project"]),
+        known_mirnas=expand("results/{project}/quantify_known_mirnas/miRNAs_expressed_all_samples_known.csv", project=config["project"]),
+        #mature=expand("results/{project}/subset_mirbase/mature.species.fa", project=config["project"]),
+        #mapped=expand("results/{project}/map_reads/mapped_reads.arf", project=config["project"]),
+        #novel_mirnas=expand("results/{project}/run_mirdeep2/expression_analyses/", project=config["project"]),
+        #combined_mature=expand("results/{project}/combine_known_novel_fa/mature.fa", project=config["project"]),
+        #all_mirnas=expand("results/{project}/quantify_all_mirnas/miRNAs_expressed_all_samples_all.csv", project=config["project"]),
+        ann_mirnas=expand("results/{project}/annotate_mirnas/miRNAs_expressed_all_samples_all.annotated.csv", project=config["project"]),
+        mutiqc=expand("results/{project}/multiqc/multiqc_report.html", project=config["project"]),
+
+rule rename_fastq:
+    input:
+        read1=get_read1_file
+    output:
+        read1=temp("results/{project}/rename_fastq/{sample}_R1.fastq.gz")
+    shell:
+        "cp {input.read1} {output.read1}"
+
+rule raw_fastq_qc:
+    input:
+        read1="results/{project}/rename_fastq/{sample}_R1.fastq.gz"
+    output:
+        out1="results/{project}/raw_fastq_qc/{sample}_R1_fastqc.html"
+    log:
+        "results/{project}/logs/raw_fastq_qc/{sample}.log"
+    conda:
+        "../envs/fastqc.yaml"
+    threads: 4
+    shell:
+        "fastqc --outdir results/{project}/raw_fastq_qc --threads {threads} --quiet {input.read1} >{log} 2>&1"
+
+rule unzip_fastq:
+    input:
+        read1="results/{project}/rename_fastq/{sample}_R1.fastq.gz"
+    output:
+        #read1=temp("results/{project}/unzip_fastq/{sample}_R1.fastq")
+        read1="results/{project}/unzip_fastq/{sample}_R1.fastq"
+    log:
+        "results/{project}/logs/unzip_fastq/{sample}.log"
+    threads: 4
+    shell:
+        "zcat {input.read1} >{output.read1} 2>{log}"
+
+rule create_config:
+    input:
+        expand("results/{project}/unzip_fastq/{sample}_R1.fastq", project=config["project"], sample=config["read1"])
+    output:
+        config="results/{project}/create_config/config.txt"
+    run:
+        # Get project name
+        project = config["project"]
+        
+        # Extract sample-to-file mapping from config.yaml
+        fqdic = config["read1"]
+        
+        # Write to config file
+        with open(output.config, "w") as fout:
+            for sample in fqdic.keys():
+                fout.write(f"results/{project}/unzip_fastq/{sample}_R1.fastq\t{sample}\n")
+
+rule collapse_reads:
+    input:
+        config="results/{project}/create_config/config.txt"
+    output:
+        collapsed_reads="results/{project}/collapse_reads/reads_collapsed.fa"
+    log:
+        "results/{project}/logs/collapse_reads/mapper.log"
+    params:
+        adapter=config["adapter"],
+        minlen=config["minlen"],
+        tmpdir=temp("results/{project}/collapse_reads/tmp")
+    conda:
+        "../envs/mirdeep2.yaml"
+    shell:
+        """
+        mkdir -p {params.tmpdir}; 
+
+        TMPDIR={params.tmpdir}; 
+
+        mapper.pl {input.config} -d -e -h -j -k {params.adapter} -l {params.minlen} -m -s {output.collapsed_reads} -v >{log} 2>&1;
+
+        rm -rf mapper_logs; 
+        """
+
+rule quantify_known_mirnas:
+    input:
+        config="results/{project}/create_config/config.txt",
+        collapsed_reads="results/{project}/collapse_reads/reads_collapsed.fa"
+    output:
+        known_mirnas="results/{project}/quantify_known_mirnas/miRNAs_expressed_all_samples_known.csv"
+    log:
+        "results/{project}/logs/quantify_known_mirnas/quantifier.log"
+    params:
+        species=config["species"],
+        mature=config["mature"],
+        hairpin=config["hairpin"]
+    conda:
+        "../envs/mirdeep2.yaml"
+    shell:
+        """
+        if [ ! -d results/{project}/quantify_known_mirnas ] 
+        then 
+            mkdir results/{project}/quantify_known_mirnas 
+        fi; 
+
+        quantifier.pl -c {input.config} -p {params.hairpin} -m {params.mature} -r {input.collapsed_reads} -y known -t {params.species} -d >{log} 2>&1; 
+
+        mv expression_analyses results/{project}/quantify_known_mirnas; 
+
+        mv *.html  results/{project}/quantify_known_mirnas/; 
+
+        mv *.csv {output.known_mirnas};
+        """
+
+rule map_reads:
+    input:
+        config="results/{project}/create_config/config.txt"
+    output:
+        mapped_reads="results/{project}/map_reads/mapped_reads.arf",
+        collapsed_reads="results/{project}/map_reads/reads_collapsed.fa"
+    log:
+        "results/{project}/logs/map_reads/mapper.log"
+    params:
+        adapter=config["adapter"],
+        minlen=config["minlen"],
+        bowtieidx=config["bowtieidx"]
+    conda:
+        "../envs/mirdeep2.yaml"
+    threads: 16
+    shell:
+        """
+        mapper.pl {input.config} -d -e -h -j -k {params.adapter} -l {params.minlen} -m -p {params.bowtieidx} -s {output.collapsed_reads} -t {output.mapped_reads} -o {threads} -v >{log} 2>&1; 
+        rm -rf mapper_logs; 
+
+        if [ -e bowtie.log ]; then mv bowtie.log results/{project}/logs/map_reads/; fi; 
+        """
+
+rule subset_mirbase:
+    input:
+        dummy="config/config.yaml"
+    output:
+        mature="results/{project}/subset_mirbase/mature.species.fa",
+        hairpin="results/{project}/subset_mirbase/hairpin.species.fa"
+    log:
+        "results/{project}/logs/subset_mirbase/grep.log"
+    params:
+        mature=config["mature"],
+        hairpin=config["hairpin"],
+        species=config["species"]
+    shell:
+        """
+        awk '/^>{params.species}-/ {{print; getline; print}}' {params.mature} | awk '/^>/ {{print $1}} !/^>/ {{print}}' > {output.mature} 2>{log}; 
+
+        awk '/^>{params.species}-/ {{print; getline; print}}' {params.hairpin} | awk '/^>/ {{print $1}} !/^>/ {{print}}' > {output.hairpin} 2>{log}; 
+
+        echo "Filtered $(grep -c '^>' {output.mature}) mature miRNAs for {params.species} species." > {log}; 
+
+        echo "Filtered $(grep -c '^>' {output.hairpin}) mature miRNAs for {params.species} species." > {log}; 
+        """
+
+rule run_mirdeep2:
+    input:
+        mapped_reads="results/{project}/map_reads/mapped_reads.arf",
+        collapsed_reads="results/{project}/map_reads/reads_collapsed.fa",
+        mature="results/{project}/subset_mirbase/mature.species.fa",
+        hairpin="results/{project}/subset_mirbase/hairpin.species.fa"
+    output:
+        mirdeep_results=directory("results/{project}/run_mirdeep2/expression_analyses/")
+    log:
+        "results/{project}/logs/run_mirdeep2/miRDeep2.log"
+    params:
+        species=config["organism"],
+        refseq=config["refseq"]
+    conda:
+        "../envs/mirdeep2.yaml"
+    shell:
+        """
+        miRDeep2.pl {input.collapsed_reads} {params.refseq} {input.mapped_reads} {input.mature} none {input.hairpin} -t {params.species} -z _novel -c -v > {log} 2>&1; 
+        
+        mv mir* expression* miRNAs* result_* pdfs_*novel dir_* results/{project}/run_mirdeep2/;
+
+        mv error_*novel.log results/{project}/logs/run_mirdeep2/; 
+        """
+
+rule combine_known_novel_fa:
+    input:
+        mirdeep_results="results/{project}/run_mirdeep2/"
+    output:
+        mature="results/{project}/combine_known_novel_fa/mature.fa",
+        hairpin="results/{project}/combine_known_novel_fa/hairpin.fa"
+    log:
+        "results/{project}/logs/combine_known_novel_fa/combine.log"
+    shell:
+        """
+        # Locate correct paths for precursor and mature miRNAs
+        known_mature=$(find {input.mirdeep_results} -name "known_mature*fa" | head -n 1); 
+        known_precursor=$(find {input.mirdeep_results} -name "known_pres*fa" | head -n 1); 
+        novel_mature=$(find {input.mirdeep_results} -name "novel_mature*fa" | head -n 1); 
+        novel_precursor=$(find {input.mirdeep_results} -name "novel_pres*fa" | head -n 1); 
+
+        # Ensure files exist
+        if [[ ! -f "${{known_mature}}" ]]; then echo "Error: Could not find known mature fa." >{log}; exit 1; fi; 
+        if [[ ! -f "${{novel_mature}}" ]]; then echo "Error: Could not find novel mature fa." >{log}; exit 1; fi; 
+        if [[ ! -f "${{known_precursor}}" ]]; then echo "Error: Could not find novel precursor fa." >{log}; exit 1; fi; 
+        if [[ ! -f "${{novel_precursor}}" ]]; then echo "Error: Could not find novel precursor fa." >{log}; exit 1; fi; 
+
+        # Save paths for precursor and mature miRNAs
+        echo "known mature: ${{known_mature}}" >>{log}; 
+        echo "novel mature: ${{novel_mature}}" >>{log}; 
+        echo "known precursor: ${{known_precursor}}" >>{log}; 
+        echo "novel precursor: ${{novel_precursor}}" >>{log}; 
+        
+        # Combine fa
+        cat ${{known_mature}} ${{novel_mature}} > {output.mature}; 
+        cat ${{known_precursor}} ${{novel_precursor}} > {output.hairpin}; 
+        """
+
+rule quantify_all_mirnas:
+    input:
+        config="results/{project}/create_config/config.txt",
+        collapsed_reads="results/{project}/collapse_reads/reads_collapsed.fa",
+        mature="results/{project}/combine_known_novel_fa/mature.fa",
+        hairpin="results/{project}/combine_known_novel_fa/hairpin.fa"
+    output:
+        all_mirnas="results/{project}/quantify_all_mirnas/miRNAs_expressed_all_samples_all.csv"
+    log:
+        "results/{project}/logs/quantify_all_mirnas/quantifier.log"
+    conda:
+        "../envs/mirdeep2.yaml"
+    shell:
+        """
+        if [ ! -d results/{project}/quantify_all_mirnas ] 
+        then 
+            mkdir results/{project}/quantify_all_mirnas 
+        fi; 
+
+        quantifier.pl -c {input.config} -p {input.hairpin} -m {input.mature} -r {input.collapsed_reads} -y all -d >{log} 2>&1; 
+
+        mv expression_analyses results/{project}/quantify_all_mirnas; 
+
+        mv *.html  results/{project}/quantify_all_mirnas/; 
+
+        mv *.csv {output.all_mirnas};
+        """
+
+rule annotate_mirnas:
+    input:
+        mirdeep_results="results/{project}/run_mirdeep2/",
+        all_mirnas="results/{project}/quantify_all_mirnas/miRNAs_expressed_all_samples_all.csv"
+    output:
+        ann_mirnas="results/{project}/annotate_mirnas/miRNAs_expressed_all_samples_all.annotated.csv"
+    log:
+        "results/{project}/logs/annotate_mirnas/annotate.log"
+    #conda:
+    #    "../envs/python.yaml"
+    run:
+        import glob
+        import pandas as pd
+
+        # Locate annotation file
+        ann_file_scan = glob.glob("{}/result_*.csv".format(input.mirdeep_results))
+        if len(ann_file_scan) == 0:
+            with open(log[0], 'w') as flog:
+                flog.write("Error: cannot find annotation file: {}results_*.csv.".format(input.mirdeep_results))
+        ann_file = ann_file_scan[0]
+
+        # Extract relevant annotation section
+        relevant_section_found = False
+        annotation_data = []
+
+        with open(ann_file, 'r') as fin:
+            for line in fin:
+                line = line.strip()
+                if "mature miRBase miRNAs detected by miRDeep2" in line:
+                    relevant_section_found = True
+                    continue
+                if (line.startswith("#") or line == "") and relevant_section_found:
+                    break
+                if relevant_section_found and line:
+                    annotation_data.append(line.split("\t"))
+
+        # Convert to DataFrame
+        annotation_df = pd.DataFrame(annotation_data[1:], columns=annotation_data[0])
+        annotation_df = annotation_df[["tag id", "mature miRBase miRNA"]]
+        annotation_df.columns = ["miRNA_ID", "miRBase_ID"]
+        
+        # Load counts matrix
+        counts_df = pd.read_table(input.all_mirnas, sep='\t', header=0, low_memory=False)
+        counts_df.rename(columns={"#miRNA":"miRNA_ID"}, inplace=True)
+
+        # Merge annotations with counts
+        annotated_counts_df = counts_df.merge(annotation_df, on="miRNA_ID", how="left")
+        annotated_counts_df["miRBase_ID"] = annotated_counts_df["miRBase_ID"].fillna("novel")
+
+        # Save the annotated counts to file
+        annotated_counts_df.to_csv(output.ann_mirnas, index=False, sep='\t')
+
+        # Logging
+        with open(log[0], 'w') as flog:
+            flog.write(f"Annotated counts matrix saved: {len(annotated_counts_df)} entries.\n")
+
+rule multiqc:
+    input:
+        rawfqqc=expand("results/{project}/raw_fastq_qc/{sample}_R1_fastqc.html", project=config["project"], sample=config["read1"]),
+        #logs=expand("results/{project}/logs/", project=config["project"]),
+        #mirdeep=expand("results/{project}/run_mirdeep2/", project=config["project"])
+    output:
+        html="results/{project}/multiqc/multiqc_report.html"
+    log:
+        "results/{project}/logs/multiqc/multiqc.log"
+    conda:
+        "../envs/multiqc.yaml"
+    shell:
+        ##"""multiqc results/{project}/raw_fastq_qc/ {input.logs} ${input.mirdeep} """
+        ##"""--ignore "*_STARpass1" """
+        """multiqc results/{project}/raw_fastq_qc/ """
+        """-o results/{project}/multiqc >{log} 2>&1"""
+
