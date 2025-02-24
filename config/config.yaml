@@ -1,0 +1,38 @@
+# input fastq files
+read1:
+    DS1: /gc11-data/analysis/taz2008/project/miRNAseq/Project_Blenis-SC-15199_231115_ANALYSIS/fastq/Blenis-SC-15199_2023_11_15/DMSO1_S4_R1_001.fastq.gz
+    DS2: /gc11-data/analysis/taz2008/project/miRNAseq/Project_Blenis-SC-15199_231115_ANALYSIS/fastq/Blenis-SC-15199_2023_11_15/DMSO2_S5_R1_001.fastq.gz
+    DS3: /gc11-data/analysis/taz2008/project/miRNAseq/Project_Blenis-SC-15199_231115_ANALYSIS/fastq/Blenis-SC-15199_2023_11_15/DMSO3_S1_R1_001.fastq.gz
+    RA1: /gc11-data/analysis/taz2008/project/miRNAseq/Project_Blenis-SC-15199_231115_ANALYSIS/fastq/Blenis-SC-15199_2023_11_15/Rapa1_S2_R1_001.fastq.gz
+    RA2: /gc11-data/analysis/taz2008/project/miRNAseq/Project_Blenis-SC-15199_231115_ANALYSIS/fastq/Blenis-SC-15199_2023_11_15/Rapa2_S6_R1_001.fastq.gz
+    RA3: /gc11-data/analysis/taz2008/project/miRNAseq/Project_Blenis-SC-15199_231115_ANALYSIS/fastq/Blenis-SC-15199_2023_11_15/Rapa3_S7_R1_001.fastq.gz
+
+# project name (use to nameoutput folder)
+project: 'Blenis-SC-15199_231115'
+
+# sample grouping information
+group:
+    DMSO: ['DS1','DS2','DS3']
+    Rapa: ['RA1','RA2','RA3']
+
+# trim parameters
+adapter: TGGAATTCTCGGGTGCCAAGG
+minlen: 18
+
+# bowtie parameters
+refseq: /gc11-data/analysis/taz2008/database/Refs/Homo_sapiens/Ensembl/GRCh38/Sequence/WholeGenomeFasta/genome.fa
+bowtieidx: /gc11-data/analysis/taz2008/database/Refs/Homo_sapiens/Ensembl/GRCh38/Sequence/BowtieIndex/GRCh38
+
+# miRBase
+organism: Human
+species: hsa
+mature: /gc11-data/analysis/taz2008/database/miRBase/Release_22/mature.fa
+hairpin: /gc11-data/analysis/taz2008/database/miRBase/Release_22/hairpin.fa
+
+# HTSeq-count parameters
+minaqual: 10
+mem: 1G
+
+# gene annotations
+refann: /gc11-data/analysis/taz2008/database/Refs/Homo_sapiens/Ensembl/GRCh38_HHV8/Annotation/Genes/clean_gtf/GRCh38_HHV8.biomart.txt.gz
+
